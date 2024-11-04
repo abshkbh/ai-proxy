@@ -7,20 +7,15 @@ app = Flask(__name__)
 # Simple route to check server status
 @app.route("/", methods=["GET"])
 def index():
-    return "Hello, the server is running"
-
-
-# Simple route to check server status
-@app.route("/", methods=["GET"])
-def index():
-    return "Hello, the server is running"
+    return "Hello, the ai-proxy is running"
 
 
 # Proxy route to handle all subpaths under /proxy/api/
 @app.route(
-    "/proxy/api/<path:subpath>", methods=["GET", "POST", "PUT", "DELETE", "PATCH"]
+    "/proxy/openai/<path:subpath>", methods=["GET", "POST", "PUT", "DELETE", "PATCH"]
 )
 def proxy(subpath):
+    print(f"/proxy/openai/{subpath} request: {request}")
     method = request.method
     data = request.get_data()
     headers = dict(request.headers)
