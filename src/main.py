@@ -77,9 +77,12 @@ def proxy(provider, subpath):
             params=request.args,
             timeout=30,  # Set a timeout for the request
         )
-
+        response.raise_for_status()
         content_type = response.headers.get("Content-Type", "application/octet-stream")
         return response.content, response.status_code, [("Content-Type", content_type)]
+    except requests.exceptions.HTTPError as e:
+        print(f"HttpError: {e}")
+        return jsonify({"error": str(e)}), e.response.status_code
     except Exception as e:
-        print(f"Error: {e}")
-        return Response(str(e), status=500)
+        print(f"General exception: {e}")
+        return jsonify({"error": str(e)}), 500
