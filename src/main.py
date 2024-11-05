@@ -29,35 +29,14 @@ def index():
     methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
 )
 def proxy(provider, subpath):
-    print(f"/proxy/{provider}/{subpath} request: {request}")
-
     if provider not in [MODEL_PROVIDER_OPENAI, MODEL_PROVIDER_BRAINTRUST_PROXY]:
-        return jsonify({"error": "Invalid API provider"}), 400
+        return jsonify({"error": f"Invalid API provider: {provider}"}), 400
     method = request.method
     data = request.get_data()
 
-    # Filter headers not to be forwarded.
-    headers = {
-        k: v
-        for k, v in request.headers
-        if k
-        not in [
-            "Host",
-            "Authorization",
-            "Connection",
-            "Content-Length",
-            "X-Stainless-Os",
-            "X-Stainless-Runtime-Version",
-            "X-Stainless-Package-Version",
-            "X-Stainless-Runtime",
-            "X-Stainless-Arch",
-            "X-Stainless-Retry-Count",
-            "X-Stainless-Lang",
-            "Origin",
-            "Referer",
-            "Accept-Encoding",
-        ]
-    }
+    # Filter headers to be forwarded, included one used by BT proxy for caching.
+    allowed_headers = {"Content-Type", "X-Bt-Use-Cache"}
+    headers = {k: v for k, v in request.headers if k in allowed_headers}
 
     if provider == MODEL_PROVIDER_OPENAI:
         headers["Authorization"] = f"Bearer {OPENAI_API_KEY}"
@@ -75,9 +54,14 @@ def proxy(provider, subpath):
             headers=headers,
             data=data,
             params=request.args,
-            timeout=30,  # Set a timeout for the request
+            timeout=30,
         )
         response.raise_for_status()
+
+        # Print headers used by BT proxy to indicate a cache hit. Won't be useful for other providers.
+        print(
+            f'X-Bt-Cached: {response.headers.get("X-Bt-Cached", "not set")} X-Cached: {response.headers.get("X-Cached", "not set")}'
+        )
         content_type = response.headers.get("Content-Type", "application/octet-stream")
         return response.content, response.status_code, [("Content-Type", content_type)]
     except requests.exceptions.HTTPError as e:
