@@ -4,14 +4,17 @@ from flask import Flask, Response, request, jsonify
 from dotenv import load_dotenv
 import requests
 
+MODEL_PROVIDER_OPENAI = "openai"
+MODEL_PROVIDER_BRAINTRUST_PROXY = "braintrust"
 
 app = Flask(__name__)
 with app.app_context():
     print("Initializing ai-proxy...")
     global LLM_API_KEY
     load_dotenv(".env")
-    LLM_API_KEY = os.getenv("OPENAI_API_KEY")
-    CORS(app, resources={r"/proxy/openai/*": {"origins": "*"}, r"/": {"origins": "*"}})
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+    BRAINTRUST_PROXY_API_KEY = os.getenv("BRAINTRUST_PROXY_API_KEY")
+    CORS(app, resources={r"/proxy/*": {"origins": "*"}, r"/": {"origins": "*"}})
 
 
 # Simple route to check server status
@@ -22,12 +25,18 @@ def index():
 
 # Proxy route to handle all subpaths under /proxy/api/
 @app.route(
-    "/proxy/openai/<path:subpath>", methods=["GET", "POST", "PUT", "DELETE", "PATCH"]
+    "/proxy/<string:provider>/<path:subpath>",
+    methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
 )
-def proxy(subpath):
-    print(f"/proxy/openai/{subpath} request: {request}")
+def proxy(provider, subpath):
+    print(f"/proxy/{provider}/{subpath} request: {request}")
+
+    if provider not in [MODEL_PROVIDER_OPENAI, MODEL_PROVIDER_BRAINTRUST_PROXY]:
+        return jsonify({"error": "Invalid API provider"}), 400
     method = request.method
     data = request.get_data()
+
+    # Filter headers not to be forwarded.
     headers = {
         k: v
         for k, v in request.headers
@@ -49,13 +58,15 @@ def proxy(subpath):
             "Accept-Encoding",
         ]
     }
-    # Add the Authorization header for OpenAI API
-    headers["Authorization"] = f"Bearer {LLM_API_KEY}"
 
-    # Construct the target URL
-    target_url = f"https://api.openai.com/v1/{subpath}"
+    if provider == MODEL_PROVIDER_OPENAI:
+        headers["Authorization"] = f"Bearer {OPENAI_API_KEY}"
+        target_url = f"https://api.openai.com/v1/{subpath}"
+    else:
+        headers["Authorization"] = f"Bearer {BRAINTRUST_PROXY_API_KEY}"
+        target_url = f"https://api.braintrust.dev/v1/proxy/{subpath}"
 
-    # Forward the request to the target URL
+    # Forward the request to the target URL.
     try:
         print(f"Forwarding request to: {target_url}")
         response = requests.request(
@@ -66,11 +77,9 @@ def proxy(subpath):
             params=request.args,
             timeout=30,  # Set a timeout for the request
         )
-        print(f"Response: {response}")
 
-        # Return the response from the OpenAI API
-        return Response(response.content, response.status_code, response.raw.headers)
-
+        content_type = response.headers.get("Content-Type", "application/octet-stream")
+        return response.content, response.status_code, [("Content-Type", content_type)]
     except Exception as e:
         print(f"Error: {e}")
         return Response(str(e), status=500)
