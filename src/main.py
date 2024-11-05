@@ -1,7 +1,16 @@
+import os
+
 from flask import Flask, Response, request, jsonify
+from dotenv import load_dotenv
 import requests
 
+
 app = Flask(__name__)
+with app.app_context():
+    print("Initializing ai-proxy...")
+    global LLM_API_KEY
+    load_dotenv(".env")
+    LLM_API_KEY = os.getenv("OPENAI_API_KEY")
 
 
 # Simple route to check server status
@@ -46,7 +55,3 @@ def proxy(subpath):
 
     except requests.exceptions.RequestException as e:
         return Response(str(e), status=500)
-
-
-if __name__ == "__main__":
-    app.run(debug=True)
