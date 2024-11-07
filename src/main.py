@@ -14,7 +14,14 @@ with app.app_context():
     load_dotenv(".env")
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
     BRAINTRUST_PROXY_API_KEY = os.getenv("BRAINTRUST_PROXY_API_KEY")
-    CORS(app, resources={r"/proxy/*": {"origins": "*"}, r"/": {"origins": "*"}})
+    CORS(
+        app,
+        resources={
+            r"/proxy/*": {"origins": "*"},
+            r"/": {"origins": "*"},
+            r"/chv-proxy/*": {"origins": "*"},
+        },
+    )
 
 
 # Simple route to check server status
@@ -47,7 +54,7 @@ def proxy(provider, subpath):
 
     # Forward the request to the target URL.
     try:
-        print(f"Forwarding request to: {target_url}")
+        print(f"Forwarding request to: {target_url} with data: {data}")
         response = requests.request(
             method=method,
             url=target_url,
@@ -62,6 +69,42 @@ def proxy(provider, subpath):
         print(
             f'X-Bt-Cached: {response.headers.get("X-Bt-Cached", "not set")} X-Cached: {response.headers.get("X-Cached", "not set")}'
         )
+        content_type = response.headers.get("Content-Type", "application/octet-stream")
+        return response.content, response.status_code, [("Content-Type", content_type)]
+    except requests.exceptions.HTTPError as e:
+        print(f"HttpError: {e}")
+        return jsonify({"error": str(e)}), e.response.status_code
+    except Exception as e:
+        print(f"General exception: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# Proxy route to handle all subpaths under /proxy/api/
+@app.route(
+    "/chv-proxy/<path:subpath>",
+    methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
+)
+def chv_proxy(subpath):
+    method = request.method
+    data = request.get_data()
+
+    # Filter headers to be forwarded
+    allowed_headers = {"Content-Type"}
+    headers = {k: v for k, v in request.headers if k in allowed_headers}
+
+    # Forward the request to the target URL.
+    target_url = f"http://127.0.0.1:7000/{subpath}"
+    try:
+        print(f"Forwarding request to: {target_url} with data: {data}")
+        response = requests.request(
+            method=method,
+            url=target_url,
+            headers=headers,
+            data=data,
+            params=request.args,
+            timeout=30,
+        )
+        response.raise_for_status()
         content_type = response.headers.get("Content-Type", "application/octet-stream")
         return response.content, response.status_code, [("Content-Type", content_type)]
     except requests.exceptions.HTTPError as e:
