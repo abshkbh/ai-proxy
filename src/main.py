@@ -6,14 +6,15 @@ import requests
 
 MODEL_PROVIDER_OPENAI = "openai"
 MODEL_PROVIDER_BRAINTRUST_PROXY = "braintrust"
+MODEL_PROVIDER_ANTHROPIC = "anthropic"
 
 app = Flask(__name__)
 with app.app_context():
     print("Initializing ai-proxy...")
-    global LLM_API_KEY
     load_dotenv(".env")
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
     BRAINTRUST_PROXY_API_KEY = os.getenv("BRAINTRUST_PROXY_API_KEY")
+    ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
     CORS(
         app,
         resources={
@@ -22,7 +23,6 @@ with app.app_context():
             r"/chv-proxy/*": {"origins": "*"},
         },
     )
-
 
 # Simple route to check server status
 @app.route("/", methods=["GET"])
@@ -36,25 +36,46 @@ def index():
     methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
 )
 def proxy(provider, subpath):
-    if provider not in [MODEL_PROVIDER_OPENAI, MODEL_PROVIDER_BRAINTRUST_PROXY]:
+    if provider not in [
+        MODEL_PROVIDER_OPENAI,
+        MODEL_PROVIDER_BRAINTRUST_PROXY,
+        MODEL_PROVIDER_ANTHROPIC,
+    ]:
         return jsonify({"error": f"Invalid API provider: {provider}"}), 400
+
     method = request.method
     data = request.get_data()
 
-    # Filter headers to be forwarded, included one used by BT proxy for caching.
-    allowed_headers = {"Content-Type", "X-Bt-Use-Cache"}
-    headers = {k: v for k, v in request.headers if k in allowed_headers}
+    # Headers required for each provider.
+    required_openai_headers = {}
+    required_anthropic_headers = {"anthropic-version"}
+    required_braintrust_proxy_headers = {"x-bt-use-cache"}
+    required_common_headers = {"content-type"}
+
+    allowed_headers = required_common_headers.union(
+        required_openai_headers,
+        required_anthropic_headers,
+        required_braintrust_proxy_headers,
+    )
+    # Normalize the keys to be lowercase.
+    allowed_headers = {k.lower() for k in allowed_headers}
+    headers = {k: v for k, v in request.headers if k.lower() in allowed_headers}
 
     if provider == MODEL_PROVIDER_OPENAI:
-        headers["Authorization"] = f"Bearer {OPENAI_API_KEY}"
+        headers["authorization"] = f"Bearer {OPENAI_API_KEY}"
         target_url = f"https://api.openai.com/v1/{subpath}"
-    else:
-        headers["Authorization"] = f"Bearer {BRAINTRUST_PROXY_API_KEY}"
+    elif provider == MODEL_PROVIDER_BRAINTRUST_PROXY:
+        headers["authorization"] = f"Bearer {BRAINTRUST_PROXY_API_KEY}"
         target_url = f"https://api.braintrust.dev/v1/proxy/{subpath}"
+    else:
+        headers["x-api-key"] = f"{ANTHROPIC_API_KEY}"
+        target_url = f"https://api.anthropic.com/{subpath}"
 
     # Forward the request to the target URL.
     try:
-        print(f"Forwarding request to: {target_url} with data: {data}")
+        print(
+            f"Forwarding request to: {target_url} with data len: {len(data)} data: {data} headers: {headers}"
+        )
         response = requests.request(
             method=method,
             url=target_url,
@@ -67,13 +88,16 @@ def proxy(provider, subpath):
 
         # Print headers used by BT proxy to indicate a cache hit. Won't be useful for other providers.
         print(
-            f'X-Bt-Cached: {response.headers.get("X-Bt-Cached", "not set")} X-Cached: {response.headers.get("X-Cached", "not set")}'
+            f'x-bt-cached: {response.headers.get("x-bt-cached", "not set")} x-cached: {response.headers.get("x-cached", "not set")}'
         )
-        content_type = response.headers.get("Content-Type", "application/octet-stream")
-        return response.content, response.status_code, [("Content-Type", content_type)]
+        content_type = response.headers.get("content-type", "application/octet-stream")
+        return response.content, response.status_code, [("content-type", content_type)]
     except requests.exceptions.HTTPError as e:
-        print(f"HttpError: {e}")
-        return jsonify({"error": str(e)}), e.response.status_code
+        # Extract the error message from the response
+        error_response = e.response.json()
+        error_message = error_response.get("error", {}).get("message", str(e))
+        print(f"HttpError: {e} error_message: {error_message}")
+        return jsonify({"error": error_message}), e.response.status_code
     except Exception as e:
         print(f"General exception: {e}")
         return jsonify({"error": str(e)}), 500
